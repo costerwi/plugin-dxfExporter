@@ -6,7 +6,6 @@ Carl Osterwisch, July 2026
 
 from math import pi, tan, atan
 import sys
-import numpy as np
 
 class Entity(list):
     """Members and methods common to all DXF entities"""
@@ -17,10 +16,19 @@ class Entity(list):
 
     @classmethod
     def print(cls, *records, file):
-        """Print dxf records to specified file"""
+        """Print formatted dxf records to specified file
+
+        >>> e = Entity(None)
+        >>> e.print(0, "TEST", 100, "SOMETHING", file=sys.stdout)
+          0
+        TEST
+        100
+        SOMETHING
+        """
+
         assert len(records)%2 == 0, "Even number of arguments required"
         for group, value in zip(records[::2], records[1::2]):
-            print("{: 3d}\n{}".format(group, value), file=file)
+            print("{:3d}\n{}".format(group, value), file=file)
 
     def export(self, owner, file):
         self.print(
@@ -80,7 +88,7 @@ class Circle(Entity):
             100, "AcDbCircle",
             10, self.center[0],
             20, self.center[1],
-            30, 0,
+            30, 0.0,
             40, self.radius,
             file=file)
 
@@ -112,29 +120,33 @@ class Line(Entity):
         super().export(owner, file)
         self.print(
             100, "AcDbLine",
-            10, point1[0],
-            20, point1[1],
-            30, 0,
-            11, point2[0],
-            21, point2[1],
-            31, 0,
+            10, self.point1[0],
+            20, self.point1[1],
+            30, 0.0,
+            11, self.point2[0],
+            21, self.point2[1],
+            31, 0.0,
             file=file)
 
 class Polyline(Entity):
     """Multiple vertices connected by lines"""
     name = "POLYLINE"
-    def __init__(self, doc):
+    def __init__(self, doc, closed=0):
         super().__init__(doc)
+        if closed:
+            self.closed = 1
+        else:
+            self.closed = 0
         self.seqend = Seqend(doc)
 
     def export(self, owner, file):
         super().export(owner, file)
         self.print(
             100, "AcDb2dPolyline",
-            10, 0,
-            20, 0,
-            30, 0,
-            70, 1 + 128, # 1=closed, 128=continuous linetype
+            10, 0.0,
+            20, 0.0,
+            30, 0.0,
+            70, self.closed,  # 1=closed, 128=continuous linetype
             file=file)
         for vertex in self:
             vertex.export(self, file)
@@ -145,7 +157,33 @@ class Seqend(Entity):
     name = "SEQEND"
 
 class Vertex(Entity):
-    """A geometric point"""
+    """A geometric point
+
+    >>> doc = Document()
+    >>> v = Vertex(doc, [1.,4.], angle=180)
+    >>> v.export(None, file=sys.stdout)
+      0
+    VERTEX
+      5
+    1
+    100
+    AcDbEntity
+      8
+    0
+    100
+    AcDbVertex
+    100
+    AcDb2dVertex
+     10
+    1.0
+     20
+    4.0
+     30
+    0.0
+     42
+    0.9999999999999999
+    """
+
     name = "VERTEX"
     def __init__(self, doc, pos, angle=0):
         super().__init__(doc)
@@ -159,11 +197,11 @@ class Vertex(Entity):
             100, "AcDb2dVertex",
             10, self.pos[0],
             20, self.pos[1],
-            30, 0,
+            30, 0.0,
             file=file)
-            if self.angle != 0:
-                bulge = tan(pi/180*angle/4)  # 0=straight segment, 1=semicircle, <0=clockwise
-                self.print(42, bulge, file=file)
+        if self.angle != 0:
+            bulge = tan(pi/180*self.angle/4)  # 0=straight segment, 1=semicircle, <0=clockwise
+            self.print(42, bulge, file=file)
 
 class PolyfaceMesh(Entity):
     """Container of PolyfaceNode and PolyfaceElement"""
@@ -183,9 +221,9 @@ class PolyfaceMesh(Entity):
         super().export(owner, file)
         self.print(
             100, "AcDb2dPolyline",
-            10, 0,
-            20, 0,
-            30, 0,
+            10, 0.0,
+            20, 0.0,
+            30, 0.0,
             70, 64,  # 64=polyface mesh type
             file=file)
         n = len(self.nodemap)
@@ -224,11 +262,18 @@ def find(records, needles, default=None):
             value = float(value)
         elif isinstance(default, int):
             value = int(value)
-        values.push(value)
+        values.append(value)
     return values
 
 def getRecords(file):
-    """Split DXF file into dicts of related records"""
+    """Split DXF file into dicts of related records
+
+    >>> with open("example.dxf") as dxf:
+    ...     e = list(getRecords(dxf))
+    >>> e[0]
+    {0: 'SECTION', 2: 'ENTITIES'}
+    """
+
     records = {}
     for n, line in enumerate(file):
         if n%2 == 0:
@@ -241,7 +286,18 @@ def getRecords(file):
     yield records
 
 def fromFile(file):
-    """Create a DXF document by importing an existing DXF file"""
+    """Create a DXF document by importing an existing DXF file
+
+    >>> with open("example.dxf") as dxf:
+    ...     doc = fromFile(dxf)
+    >>> len(doc.allEntities)
+    78
+    >>> len(doc[0])  # entities in first section
+    11
+    >>> with open("exported.dxf", "w") as dxf:
+    ...     doc.export(file=dxf)
+    """
+
     doc = Document()
     section = None
     unsupported = {"ENDSEC", "EOF", "SEQEND"}
@@ -260,11 +316,11 @@ def fromFile(file):
             continue
         elif name == "CIRCLE":
             center = find(records, [10, 20, 30], 0.0)
-            redius = float(records.get(40, 0.0))
+            radius = float(records.get(40, 0.0))
             section.append(Circle(doc, center, radius))
         elif name == "ARC":
             center = find(records, [10, 20, 30], 0.0)
-            redius, startAngle, endAngle = find(records, [40, 50, 51], 0.0)
+            radius, startAngle, endAngle = find(records, [40, 50, 51], 0.0)
             section.append(Arc(doc, center, radius, startAngle, endAngle))
         elif name == "LINE":
             point1 = find(records, [10, 20, 30], 0.0)
@@ -277,7 +333,7 @@ def fromFile(file):
                 container = PolyfaceMesh(doc)
                 section.append(container)
             else:
-                container = Polyline(doc)
+                container = Polyline(doc, closed=kind & 1)
                 section.append(container)
         elif name == "VERTEX":
             pos = find(records, [10, 20, 30], 0.0)
@@ -300,69 +356,6 @@ def fromFile(file):
                 unsupported.add(name)
     return doc
 
-def fromSketch(sketch):
-    """Create a DXF document from geometry of the provided CAE sketch"""
-    doc = Document()
-    entities = Section(doc, "ENTITIES")
-    doc.append(entities)
-    unsupported = set()  # set of unsupported curve types
-    for curve in sketch.geometry.values():
-        if curve.type != REGULAR:
-            continue  # ignore construction geometry for now
-        v = curve.getVertices()
-        if curve.curveType == ARC:
-            center = v[2].coords
-            p1 = np.asarray(v[0].coords) - center
-            p2 = np.asarray(v[1].coords) - center
-            radius = np.linalg.norm(p1)
-            startAngle = np.rad2deg(np.arctan2(p1[1], p1[0]))
-            endAngle = np.rad2deg(np.arctan2(p2[1], p2[0]))
-            entities.append(Arc(doc, center, radius, startAngle, endAngle))
-        elif curve.curveType == CIRCLE:
-            center = v[1].coords
-            p = np.asarray(v[0].coords) - center
-            radius = np.linalg.norm(p)
-            entities.append(Circle(doc, center, radius))
-        elif curve.curveType == LINE:
-            entities.append(Line(doc, v[0].coords, v[1].coords))
-        elif curve.curveType not in unsupported:
-            print("Curve type", curve.curveType, "is not yet supported")
-            unsupported.add(curve.curveType)
-    return doc
-
-def fromOdbResult(viewport):
-    """Export a mesh"""
-    odb = viewport.displayedObject
-    odbDisplay = viewport.odbDisplay
-    elements = viewport.getActiveElementLabels()
-    # TODO get deformed node coordinates
-    doc = Document()
-    entities = Section(doc, "ENTITIES")
-    doc.append(entities)
-    for instance in instances:
-        mesh = PolyfaceMesh(doc)
-        entities.append(mesh)
-        for node in nodes:
-            mesh.appendNode(PolyfaceNode(doc, node.coordinates), node.label)
-        for element in elements:
-            mesh.append(PolyfaceElement(doc, element.connectivity))
-    return doc
-
-def export(fileName):
-    """Called by Abaqus CAE to export the currently displayed object"""
-    viewport = session.viewports[session.currentViewportName]
-    displayedObject = viewport.displayedObject
-    doc = None
-    if hasattr(displayedObject, "geometry"):  # sketch is displayed
-        doc = fromSketch(displayedObject)
-    elif hasattr(displayedObject, "jobData"):  # odb is displayed
-        doc = fromOdbResult(viewport)
-    else:
-        print("Currently displaed object is not yet supported for DXF output")
-    if doc is not None:
-        with open(fileName, "w") as dxf:
-            doc.export(file=dxf)
-
 if __name__ == "__main__":
-    # Was run from File > Run Script...
-    export("example.dxf")
+    import doctest
+    doctest.testmod()
