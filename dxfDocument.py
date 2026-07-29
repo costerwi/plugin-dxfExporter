@@ -7,6 +7,18 @@ Carl Osterwisch, July 2026
 from math import pi, tan, atan
 import sys
 
+def threeD(point):
+    """Append 0.0 until point is 3D
+
+    >>> threeD([1., 2.])
+    [1.0, 2.0, 0.0]
+    """
+
+    coord = list(point[:3])
+    while len(coord) < 3:
+        coord.append(0.0)
+    return coord
+
 class Entity(list):
     """Members and methods common to all DXF entities"""
     def __init__(self, doc):
@@ -84,11 +96,12 @@ class Circle(Entity):
 
     def export(self, owner, file):
         super().export(owner, file)
+        center = threeD(self.center)
         self.print(
             100, "AcDbCircle",
-            10, self.center[0],
-            20, self.center[1],
-            30, 0.0,
+            10, center[0],
+            20, center[1],
+            30, center[2],
             40, self.radius,
             file=file)
 
@@ -118,14 +131,16 @@ class Line(Entity):
 
     def export(self, owner, file):
         super().export(owner, file)
+        point1 = threeD(self.point1)
+        point2 = threeD(self.point2)
         self.print(
             100, "AcDbLine",
-            10, self.point1[0],
-            20, self.point1[1],
-            30, 0.0,
-            11, self.point2[0],
-            21, self.point2[1],
-            31, 0.0,
+            10, point1[0],
+            20, point1[1],
+            30, point1[2],
+            11, point2[0],
+            21, point2[1],
+            31, point2[2],
             file=file)
 
 class Polyline(Entity):
@@ -192,12 +207,13 @@ class Vertex(Entity):
 
     def export(self, owner, file):
         super().export(owner, file)
+        pos = threeD(self.pos)
         self.print(
             100, "AcDbVertex",
             100, "AcDb2dVertex",
-            10, self.pos[0],
-            20, self.pos[1],
-            30, 0.0,
+            10, pos[0],
+            20, pos[1],
+            30, pos[2],
             file=file)
         if self.angle != 0:
             bulge = tan(pi/180*self.angle/4)  # 0=straight segment, 1=semicircle, <0=clockwise
@@ -229,7 +245,7 @@ class PolyfaceMesh(Entity):
         n = len(self.nodemap)
         self.print(
             71, n,  # number of nodes
-            72, len(self.children) - n,  # number of elements
+            72, len(self) - n,  # number of elements
             file=file)
         for child in self:
             child.export(self, file)
@@ -244,7 +260,7 @@ class PolyfaceNode(Vertex):
 class PolyfaceElement(Vertex):
     """Container of PolyfaceNode to define an element face"""
     def __init__(self, doc, nodes):
-        super().__init__(doc, [0, 0])  # coordinates are not used
+        super().__init__(doc, [])  # coordinates are not used
         self.nodes = nodes[:4]  # list of node labels
 
     def export(self, owner, file):
