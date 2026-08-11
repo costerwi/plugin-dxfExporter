@@ -134,6 +134,18 @@ def fromOdbResult(viewport):
                     continue
                 mesh.extend(faces(element))
     return doc
+
+def fromXYPlot(xyPlot):
+    """Create a DXF document from XYPlot curve data"""
+    doc = dxf.Document()
+    section = dxf.Section(doc, "ENTITIES")
+    doc.append(section)
+    for curveName in xyPlot.curvesToPlot:
+        polyline = dxf.Polyline(doc)
+        section.append(polyline)
+        xyData = session.curves[curveName].data
+        for xy in xyData.data:
+            polyline.append(dxf.Vertex(doc, xy))
     return doc
 
 def export(fileName):
@@ -147,6 +159,9 @@ def export(fileName):
     elif hasattr(displayedObject, "jobData"):  # odb is displayed
         print("Exporting mesh to {!r}".format(fileName))
         doc = fromOdbResult(viewport)
+    elif hasattr(displayedObject, "curvesToPlot"):
+        print("Exporting XYPlot data to {!r}".format(fileName))
+        doc = fromXYPlot(displayedObject)
     elif hasattr(displayedObject, "modelName"):  # Part or Assembly
         try:
             model = mdb.models[displayedObject.modelName]
