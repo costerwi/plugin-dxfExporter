@@ -53,6 +53,35 @@ def fromOdbResult(viewport):
     section = dxf.Section(doc, "ENTITIES")
     doc.append(section)
 
+    faceNodes = {
+        4 : ( (0, 2, 1), (0, 1, 3), (1, 2, 3), (0, 3, 2)),
+        6 : ( (0, 2, 1), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (0, 3, 5, 2)),
+        8 : ( (0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (0, 4, 7, 3)),
+        }
+    faceNodes[10] = faceNodes[4]
+    faceNodes[15] = faceNodes[6]
+    faceNodes[20] = faceNodes[8]
+
+    def faces(element):
+        """Return a list of PolyfaceElement representing this element's faces"""
+        elementFaces = []
+        N = len(element.connectivity)
+        if "C3D" in element.type:
+            for f in faceNodes[N]:
+                elementFaces.append(
+                        dxf.PolyfaceElement(doc, (element.connectivity[i] for i in f))
+                        )
+        else:
+            if N <= 4:
+                elementFaces.append(dxf.PolyfaceElement(doc, element.connectivity))
+            elif N == 6:
+                # just the corner nodes
+                elementFaces.append(dxf.PolyfaceElement(doc, element.connectivity[:3]))
+            elif N == 8:
+                # just the corner nodes
+                elementFaces.append(dxf.PolyfaceElement(doc, element.connectivity[:4]))
+        return elementFaces
+
     if odbDisplay.display.plotState[0] in (DEFORMED, CONTOURS_ON_DEF, SYMBOLS_ON_DEF, ORIENT_ON_DEF):
         # Gather nodal displacements
         if odbDisplay.commonOptions.deformationScaling == NONUNIFORM:
@@ -75,7 +104,8 @@ def fromOdbResult(viewport):
             section.append(mesh)
             data = np.asarray(block.data)
             if data.shape[1] == 2:
-                data = np.c_[data, np.zeros(len(data))]  # extend to 3D
+                # must expand 2D displacement to 3D
+                data = np.hstack([data, np.zeros([len(data),1])])
             for node, disp in zip(instance.nodes, scaleFactor*data):
                 if node.label not in nodeLabels:
                     continue
@@ -84,8 +114,7 @@ def fromOdbResult(viewport):
             for element in instance.elements:
                 if element.label not in elementLabels:
                     continue
-                # TODO faces of other element types
-                mesh.append(dxf.PolyfaceElement(doc, element.connectivity))
+                mesh.extend(faces(element))
     else:
         # Undeformed
         for instName, nodeLabels in activeNodes.items():
@@ -103,8 +132,8 @@ def fromOdbResult(viewport):
             for element in instance.elements:
                 if element.label not in elementLabels:
                     continue
-                # TODO faces of other element types
-                mesh.append(dxf.PolyfaceElement(doc, element.connectivity))
+                mesh.extend(faces(element))
+    return doc
     return doc
 
 def export(fileName):
