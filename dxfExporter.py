@@ -100,7 +100,7 @@ def fromOdbResult(viewport):
         except KeyError:
             continue  # no active elements
         nodeLabels = set(nodeLabels)
-        instance = odb.rootAssembly.instances[instName]
+        instance = odb.rootAssembly.instances[instanceName]
         mesh = dxf.PolyfaceMesh(doc)  # new mesh for each instance
         section.append(mesh)
 
@@ -130,7 +130,7 @@ def fromOdbResult(viewport):
             elif N == 2:  # beam or truss
                 try:
                     point1, point2 = [mesh[mesh.nodemap[nodeId]] for nodeId in element.connectivity]
-                except KeyError, IndexError:
+                except (KeyError, IndexError):
                     continue
                 section.append(dxf.Line(doc, point1, point2))
     return doc
