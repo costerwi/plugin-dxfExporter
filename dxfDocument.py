@@ -45,13 +45,13 @@ class Entity(list):
     def export(self, owner, file):
         self.print(
             0, self.name,
-            5, "{:X}".format(self.handle),
+            #5, "{:X}".format(self.handle),
             file=file)
         if owner is not None:
-            self.print(330, "{:X}".format(owner.handle), file=file)
+            #self.print(330, "{:X}".format(owner.handle), file=file)
+            pass
         self.print(
-            100, "AcDbEntity",
-            8, 0,  # layer
+            8, 0,  # layer 0
             file=file)
 
 class Document(Entity):
@@ -98,7 +98,6 @@ class Circle(Entity):
         super().export(owner, file)
         center = threeD(self.center)
         self.print(
-            100, "AcDbCircle",
             10, center[0],
             20, center[1],
             30, center[2],
@@ -116,7 +115,6 @@ class Arc(Circle):
     def export(self, owner, file):
         super().export(owner, file)
         self.print(
-            100, "AcDbArc",
             50, self.startAngle,
             51, self.endAngle,
             file=file)
@@ -134,7 +132,6 @@ class Line(Entity):
         point1 = threeD(self.point1)
         point2 = threeD(self.point2)
         self.print(
-            100, "AcDbLine",
             10, point1[0],
             20, point1[1],
             30, point1[2],
@@ -157,10 +154,7 @@ class Polyline(Entity):
     def export(self, owner, file):
         super().export(owner, file)
         self.print(
-            100, "AcDb2dPolyline",
-            10, 0.0,
-            20, 0.0,
-            30, 0.0,
+            66, 1,  # flag: entities follow
             70, self.closed,  # 1=closed, 128=continuous linetype
             file=file)
         for vertex in self:
@@ -179,16 +173,8 @@ class Vertex(Entity):
     >>> v.export(None, file=sys.stdout)
       0
     VERTEX
-      5
-    1
-    100
-    AcDbEntity
       8
     0
-    100
-    AcDbVertex
-    100
-    AcDb2dVertex
      10
     1.0
      20
@@ -209,8 +195,6 @@ class Vertex(Entity):
         super().export(owner, file)
         pos = threeD(self.pos)
         self.print(
-            100, "AcDbVertex",
-            100, "AcDb2dVertex",
             10, pos[0],
             20, pos[1],
             30, pos[2],
@@ -234,18 +218,18 @@ class PolyfaceMesh(Entity):
         self.nodemap[label or n] = n  # map label to index
 
     def export(self, owner, file):
+        m = len(self.nodemap)  # number of nodes
+        n = len(self) - m  # number of elements
+        if m*n == 0:
+            return  # don't export empty mesh
         super().export(owner, file)
         self.print(
-            100, "AcDb2dPolyline",
-            10, 0.0,
-            20, 0.0,
-            30, 0.0,
+            66, 1,  # flag: entities follow
             70, 64,  # 64=polyface mesh type
             file=file)
-        n = len(self.nodemap)
         self.print(
-            71, n,  # number of nodes
-            72, len(self) - n,  # number of elements
+            71, m,
+            72, n,
             file=file)
         for child in self:
             child.export(self, file)
