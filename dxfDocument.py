@@ -222,6 +222,7 @@ class PolyfaceMesh(Entity):
         n = len(self) - m  # number of elements
         if m*n == 0:
             return  # don't export empty mesh
+        # TODO split into multiple PolyfaceMesh if size limits become a problem
         super().export(owner, file)
         self.print(
             66, 1,  # flag: entities follow

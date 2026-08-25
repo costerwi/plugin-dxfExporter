@@ -54,9 +54,9 @@ def fromOdbResult(viewport):
     doc.append(section)
 
     faceNodes = {
-        4 : ( (0, 2, 1), (0, 1, 3), (1, 2, 3), (0, 3, 2)),
-        6 : ( (0, 2, 1), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (0, 3, 5, 2)),
-        8 : ( (0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (0, 4, 7, 3)),
+        4 : ( (0, 2, 1), (0, 1, 3), (1, 2, 3), (0, 3, 2) ),
+        6 : ( (0, 2, 1), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (0, 3, 5, 2) ),
+        8 : ( (0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (0, 4, 7, 3) ),
         }
     faceNodes[10] = faceNodes[4]
     faceNodes[15] = faceNodes[6]
@@ -82,6 +82,7 @@ def fromOdbResult(viewport):
                 elementFaces.append(dxf.PolyfaceElement(doc, element.connectivity[:4]))
         return elementFaces
 
+    fieldU = None
     if odbDisplay.display.plotState[0] in (DEFORMED, CONTOURS_ON_DEF, SYMBOLS_ON_DEF, ORIENT_ON_DEF):
         # Gather nodal displacements
         if odbDisplay.commonOptions.deformationScaling == NONUNIFORM:
@@ -92,47 +93,46 @@ def fromOdbResult(viewport):
         step = odb.steps.values()[stepIndex]
         frame = step.frames[frameIndex]
         fieldU = frame.fieldOutputs[odbDisplay.deformedVariable[0]]
-        for block in fieldU.bulkDataBlocks:
-            instance = block.instance
-            try:
-                nodeLabels = set(activeNodes[instance.name])
-                elementLabels = set(activeElements[instance.name])
-            except KeyError:
-                continue
-            assert len(instance.nodes) == len(block.data)
-            mesh = dxf.PolyfaceMesh(doc)
-            section.append(mesh)
-            data = np.asarray(block.data)
-            if data.shape[1] == 2:
-                # must expand 2D displacement to 3D
-                data = np.hstack([data, np.zeros([len(data),1])])
-            for node, disp in zip(instance.nodes, scaleFactor*data):
-                if node.label not in nodeLabels:
+
+    for instanceName, nodeLabels in activeNodes.items():
+        try:
+            elementLabels = set(activeElements[instanceName])
+        except KeyError:
+            continue  # no active elements
+        nodeLabels = set(nodeLabels)
+        instance = odb.rootAssembly.instances[instName]
+        mesh = dxf.PolyfaceMesh(doc)  # new mesh for each instance
+        section.append(mesh)
+
+        coordinates = np.array([node.coordinates for node in instance.nodes])
+        if fieldU is not None:
+            for block in fieldU.bulkDataBlocks:
+                if block.instance != instance:
                     continue
-                coord = disp + node.coordinates  # TODO check performance
+                assert len(instance.nodes) == len(block.data)
+                data = np.asarray(block.data)
+                if data.shape[1] == 2:
+                    # must expand 2D displacement to 3D
+                    data = np.hstack([data, np.zeros([len(data),1])])
+                coordinates += scaleFactor*data
+                break
+            else:
+                pass  # no results available for this instance
+        for node, coord in zip(instance.nodes, coordinates):
+            if node.label in nodeLabels:
                 mesh.appendNode(dxf.PolyfaceNode(doc, coord), node.label)
-            for element in instance.elements:
-                if element.label not in elementLabels:
-                    continue
+        for element in instance.elements:
+            if element.label not in elementLabels:
+                continue  # not currently displayed
+            N = len(element.connectivity)
+            if N >= 3:  # assumed to have faces
                 mesh.extend(faces(element))
-    else:
-        # Undeformed
-        for instName, nodeLabels in activeNodes.items():
-            try:
-                elementLabels = activeElements[instName]
-                instance = odb.rootAssembly.instances[instName]
-            except KeyError:
-                continue
-            mesh = dxf.PolyfaceMesh(doc)
-            section.append(mesh)
-            for node in instance.nodes:
-                if node.label not in nodeLabels:
+            elif N == 2:  # beam or truss
+                try:
+                    point1, point2 = [mesh[mesh.nodemap[nodeId]] for nodeId in element.connectivity]
+                except KeyError, IndexError:
                     continue
-                mesh.appendNode(dxf.PolyfaceNode(doc, node.coordinates), node.label)
-            for element in instance.elements:
-                if element.label not in elementLabels:
-                    continue
-                mesh.extend(faces(element))
+                section.append(dxf.Line(doc, point1, point2))
     return doc
 
 def fromXYPlot(xyPlot):
