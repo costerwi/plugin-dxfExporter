@@ -66,5 +66,6 @@ toolset.registerGuiMenuButton(
         kernelInitString='import dxfExporter  # {}'.format(__version__),
         author='Carl Osterwisch',
         version=__version__,
+        helpUrl="https://github.com/costerwi/plugin-dxfExporter",
         description=__doc__,
         )
