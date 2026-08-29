@@ -217,6 +217,59 @@ class PolyfaceMesh(Entity):
         n = len(self.nodemap) + 1
         self.nodemap[label or n] = n  # map label to index
 
+    def freeEdges(self, doc):
+        """Return list of Polyline(s) of mesh free edges"""
+        edges = {}
+        def addEdge(n1, n2):
+            if n1 < n2:
+                edge = n1, n2
+            else:
+                edge = n2, n1
+            previous = edges.get(edge)
+            if previous is None:
+                edges[edge] = True  # first element to reference this edge
+            elif previous is True:
+                edges[edge] = False  # duplicate found
+        for face in self[len(self.nodemap):]:
+            assert isinstance(face, PolyfaceElement)
+            N = len(face.nodes)
+            if N == 3:
+                n1, n2, n3 = face.nodes
+                addEdge(n1, n2)
+                addEdge(n1, n3)
+                addEdge(n2, n3)
+            elif N == 4:
+                n1, n2, n3, n4 = face.nodes
+                addEdge(n1, n2)
+                addEdge(n2, n3)
+                addEdge(n3, n4)
+                addEdge(n4, n1)
+        edges = {k for k, v in edges.items() if v}  # set of free edges
+
+        polylines = []
+        while edges:
+            nextEdge = edges.pop()  # start anywhere
+            connectedNodes = list(nextEdge)
+            while nextEdge:
+                end = connectedNodes[-1]
+                for nextEdge in edges:  # TODO how bad is this performance?
+                    if end == nextEdge[0]:
+                        connectedNodes.append(nextEdge[1])
+                        break
+                    elif end == nextEdge[1]:
+                        connectedNodes.append(nextEdge[0])
+                        break
+                else:
+                    nextEdge = None  # not matched
+                edges.discard(nextEdge)
+
+            polyline = Polyline(doc, closed = True)
+            polylines.append(polyline)
+            for i in connectedNodes:
+                polyfaceNode = self[i - 1]  # dxf node indices start from 1
+                polyline.append(Vertex(doc, polyfaceNode.pos))
+        return polylines
+
     def export(self, owner, file):
         m = len(self.nodemap)  # number of nodes
         n = len(self) - m  # number of elements
