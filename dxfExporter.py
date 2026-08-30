@@ -132,10 +132,12 @@ def fromOdbResult(viewport):
                 except (KeyError, IndexError):
                     continue
                 section.append(dxf.Line(doc, point1, point2))
+        mesh = mesh.freeFaces(doc)  # remove duplicate (interior) faces
         if odbDisplay.commonOptions.visibleEdges in (ALL, EXTERIOR):
             section.append(mesh)
         else:
-            section.extend(mesh.freeEdges(doc))
+            for feature in mesh.splitFeatures(doc, odbDisplay.basicOptions.featureAngle):
+                section.extend(feature.freeEdges(doc))
     return doc
 
 def fromXYPlot(xyPlot):
