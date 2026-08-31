@@ -4,8 +4,9 @@
 Carl Osterwisch, July 2026
 """
 
-from math import pi, tan, atan
 import sys
+from time import perf_counter
+import numpy as np
 
 def threeD(point):
     """Append 0.0 until point is 3D
@@ -191,6 +192,9 @@ class Vertex(Entity):
         self.pos = pos
         self.angle = angle
 
+    def __bool__(self):
+        return True  # otherwise based on len(self) which is always False
+
     def export(self, owner, file):
         super().export(owner, file)
         pos = threeD(self.pos)
@@ -200,7 +204,7 @@ class Vertex(Entity):
             30, pos[2],
             file=file)
         if self.angle != 0:
-            bulge = tan(pi/180*self.angle/4)  # 0=straight segment, 1=semicircle, <0=clockwise
+            bulge = np.tan(np.radians(self.angle/4))  # 0=straight segment, 1=semicircle, <0=clockwise
             self.print(42, bulge, file=file)
 
 class PolyfaceMesh(Entity):
@@ -216,6 +220,147 @@ class PolyfaceMesh(Entity):
         self.append(node)
         n = len(self.nodemap) + 1
         self.nodemap[label or n] = n  # map label to index
+
+    def freeEdges(self, doc):
+        """Return list of Polyline(s) of mesh free edges"""
+        edges = {}
+        def addEdge(n1, n2):
+            if n1 < n2:
+                edge = n1, n2
+            else:
+                edge = n2, n1
+            existing = edges.get(edge)
+            if existing is None:
+                edges[edge] = True  # first element to reference this edge
+            elif existing is True:
+                edges[edge] = False  # duplicate found
+        for face in self[len(self.nodemap):]:
+            assert isinstance(face, PolyfaceElement)
+            N = len(face.nodes)
+            if N == 3:
+                n1, n2, n3 = face.nodes
+                addEdge(n1, n2)
+                addEdge(n1, n3)
+                addEdge(n2, n3)
+            elif N == 4:
+                n1, n2, n3, n4 = face.nodes
+                addEdge(n1, n2)
+                addEdge(n2, n3)
+                addEdge(n3, n4)
+                addEdge(n4, n1)
+        edges = {k for k, v in edges.items() if v}  # set of free edges
+
+        polylines = []
+        while edges:
+            nextEdge = edges.pop()  # start anywhere
+            connectedNodes = list(nextEdge)
+            while nextEdge:
+                end = connectedNodes[-1]
+                for nextEdge in edges:  # TODO how bad is this performance?
+                    if end == nextEdge[0]:
+                        connectedNodes.append(nextEdge[1])
+                        break
+                    elif end == nextEdge[1]:
+                        connectedNodes.append(nextEdge[0])
+                        break
+                else:
+                    nextEdge = None  # not matched
+                edges.discard(nextEdge)
+
+            polyline = Polyline(doc, closed = True)
+            polylines.append(polyline)
+            for nid in connectedNodes:
+                polyfaceNode = self[self.nodemap[nid] - 1]  # dxf node indices start from 1
+                polyline.append(Vertex(doc, polyfaceNode.pos))
+        return polylines
+
+    def is2D(self):
+        """Return True if all nodes are on the XY plane"""
+        return all(len(n.pos < 3) or abs(n.pos[2]) < 1e-7 for n in self[:len(self.nodemap)])
+
+    def freeFaces(self, doc):
+        """Return PolyfaceMesh with duplicate (interior) faces removed"""
+        if self.is2D():
+            return self  # skip for 2D
+        faces = {}
+        for face in self[len(self.nodemap):]:
+            assert isinstance(face, PolyfaceElement)
+            faceNodes = tuple(sorted(face.nodes))
+            existing = faces.get(faceNodes)
+            if existing is None:
+                faces[faceNodes] = face  # first face with these nodes
+            elif existing:
+                faces[faceNodes] = False  # duplicate found
+        faces = {k: v for k, v in faces.items() if v}  # dict of free faces
+        newMesh = PolyfaceMesh(doc)
+        for faceNodes in faces:
+            for nid in faceNodes:
+                if not nid in newMesh.nodemap:
+                    node = self[self.nodemap[nid] - 1]  # dxf node indices start from 1
+                    newMesh.appendNode(node, label=nid)  # uses the same PolymeshNode
+        newMesh.extend(faces.values())  # uses the same PolymeshElements
+        return newMesh
+
+    def splitFeatures(self, doc, angle=20):
+        """Return list of PolyfaceMesh split by feature angle"""
+        if self.is2D():
+            return [self]  # skip for 2D
+        unmatched = [e for e in self[len(self.nodemap):]]
+        v0 = []
+        v1 = []
+        unmatchedNodes = []
+        for face in unmatched:
+            points = np.array([self[self.nodemap[nid] - 1].pos for nid in face.nodes])
+            v0.append( points[1] - points[0] )  # vector to first point
+            v1.append( points[-1] - points[0] )  # vector to last point
+            faceNodes = list(face.nodes)
+            while len(faceNodes) < 4:
+                faceNodes.append(-1)  # dummy node id so all rows will have 4 columns
+            unmatchedNodes.append(faceNodes)
+        unmatchedNormals = np.cross(v0, v1)  # arbitary vector length
+        unmatchedNormals /= np.linalg.norm(unmatchedNormals, axis=1, keepdims=True)
+        unmatchedNodes = np.array(unmatchedNodes)
+        del v0, v1
+
+        dotCriteria = np.cos(np.radians(angle))
+        features = []  # list of new PolyfaceMesh
+        while unmatched:
+            fringeFace = unmatched.pop(0)  # start anywhere
+            matched = [fringeFace]
+            unmatchedNodes = unmatchedNodes[1:]
+            uniqueNodes = set(fringeFace.nodes)
+            fringeFace.normal, unmatchedNormals = unmatchedNormals[0], unmatchedNormals[1:]
+            i = 0
+            while i < len(matched):
+                fringeFace = matched[i]
+                i += 1
+                touching = np.zeros(len(unmatched), dtype=bool)
+                for nid in fringeFace.nodes:
+                    np.logical_or(touching, np.any(nid == unmatchedNodes, axis=1), out=touching)
+                if not np.any(touching):
+                    continue
+                tangent = np.zeros_like(touching, dtype=bool)
+                tangent[touching] = unmatchedNormals[touching].dot(fringeFace.normal) >= dotCriteria  # true if normals are close
+                np.logical_and(touching, tangent, out=tangent)  # true if touching and normals are close
+                indices = np.flatnonzero(tangent).tolist()
+                if not indices:
+                    continue
+                newlyAdded = [unmatched.pop(i) for i in reversed(indices)]
+                newlyAdded.reverse()  # un-reverse the sequence
+                for face, normal in zip(newlyAdded, unmatchedNormals[tangent]):
+                    face.normal = normal
+                matched.extend(newlyAdded)
+                uniqueNodes.update(unmatchedNodes[tangent].flat)
+                unmatchedNodes = unmatchedNodes[~tangent]
+                unmatchedNormals = unmatchedNormals[~tangent]
+            newMesh = PolyfaceMesh(doc)
+            features.append(newMesh)
+            uniqueNodes.discard(-1)
+            for nid in sorted(uniqueNodes):
+                node = self[self.nodemap[nid] - 1]  # dxf node indices start from 1
+                newMesh.appendNode(node, label=nid)  # uses the same PolymeshNode
+            newMesh.extend(matched)  # uses the same PolymeshElements
+        return features
 
     def export(self, owner, file):
         m = len(self.nodemap)  # number of nodes
@@ -246,7 +391,7 @@ class PolyfaceElement(Vertex):
     """Container of PolyfaceNode to define an element face"""
     def __init__(self, doc, nodes):
         super().__init__(doc, [])  # coordinates are not used
-        self.nodes = nodes[:4]  # list of node labels
+        self.nodes = tuple(nodes[:4])  # node labels
 
     def export(self, owner, file):
         super().export(owner, file)
@@ -339,7 +484,7 @@ def fromFile(file):
         elif name == "VERTEX":
             pos = find(records, [10, 20, 30], 0.0)
             buldge = float(records.get(42, 0.0))
-            angle = 180/pi*atan(buldge)*4
+            angle = np.degrees(np.atan(buldge)*4)
             kind = int(records.get(70, 0))
             if kind & 128:
                 # polyface mesh

@@ -47,7 +47,6 @@ def fromOdbResult(viewport):
     odbDisplay = viewport.odbDisplay
     activeNodes = viewport.getActiveNodeLabels(useCut=True, printResults=False)
     activeElements = viewport.getActiveElementLabels(useCut=True, printResults=False)
-    # TODO find edges of mesh
 
     doc = dxf.Document()
     section = dxf.Section(doc, "ENTITIES")
@@ -102,7 +101,6 @@ def fromOdbResult(viewport):
         nodeLabels = set(nodeLabels)
         instance = odb.rootAssembly.instances[instanceName]
         mesh = dxf.PolyfaceMesh(doc)  # new mesh for each instance
-        section.append(mesh)
 
         coordinates = np.array([node.coordinates for node in instance.nodes])
         if fieldU is not None:
@@ -133,6 +131,12 @@ def fromOdbResult(viewport):
                 except (KeyError, IndexError):
                     continue
                 section.append(dxf.Line(doc, point1, point2))
+        mesh = mesh.freeFaces(doc)  # remove duplicate (interior) faces
+        if odbDisplay.commonOptions.visibleEdges in (ALL, EXTERIOR):
+            section.append(mesh)
+        else:
+            for feature in mesh.splitFeatures(doc, odbDisplay.basicOptions.featureAngle):
+                section.extend(feature.freeEdges(doc))
     return doc
 
 def fromXYPlot(xyPlot):
@@ -166,7 +170,7 @@ def export(fileName):
         try:
             model = mdb.models[displayedObject.modelName]
             sketch = model.sketches['__edit__']  # currently editing sketch
-            print("Exporting sketch to {!r}".format(fileName))
+            print("Exporting sketch to '{}'".format(fileName))
             doc = fromSketch(sketch)
         except KeyError:
             pass

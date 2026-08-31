@@ -6,7 +6,7 @@ Carl Osterwisch, July 2026
 from pathlib import Path
 from abaqusGui import *
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 class ExportForm(AFXForm):
     ID_OVERWRITE = AFXForm.ID_LAST
