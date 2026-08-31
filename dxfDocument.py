@@ -305,47 +305,61 @@ class PolyfaceMesh(Entity):
         """Return list of PolyfaceMesh split by feature angle"""
         if self.is2D():
             return [self]  # skip for 2D
-        p = [perf_counter()]
-        unmatched = {e.nodes: e for e in self[len(self.nodemap):]}
-        p.append(perf_counter())
-        print(p[-1] - p[-2], 'a')
-        for face in unmatched.values():
+        unmatched = [e for e in self[len(self.nodemap):]]
+        v0 = []
+        v1 = []
+        unmatchedNodes = []
+        for face in unmatched:
             points = np.array([self[self.nodemap[nid] - 1].pos for nid in face.nodes])
-            v0 = points[1] - points[0]
-            v1 = points[-1] - points[0]
-            face.normal = np.cross(v0, v1)
-            face.normal /= np.linalg.norm(face.normal)
-        p.append(perf_counter())
-        print(p[-1] - p[-2], 'b')
+            v0.append( points[1] - points[0] )  # vector to first point
+            v1.append( points[-1] - points[0] )  # vector to last point
+            faceNodes = list(face.nodes)
+            while len(faceNodes) < 4:
+                faceNodes.append(-1)  # dummy node id so all rows will have 4 columns
+            unmatchedNodes.append(faceNodes)
+        unmatchedNormals = np.cross(v0, v1)  # arbitary vector length
+        unmatchedNormals /= np.linalg.norm(unmatchedNormals, axis=1, keepdims=True)
+        unmatchedNodes = np.array(unmatchedNodes)
+        del v0, v1
 
-        maxDot = np.cos(np.radians(angle))
+        dotCriteria = np.cos(np.radians(angle))
         features = []  # list of new PolyfaceMesh
         while unmatched:
+            fringeFace = unmatched.pop(0)  # start anywhere
+            matched = [fringeFace]
+            unmatchedNodes = unmatchedNodes[1:]
+            uniqueNodes = set(fringeFace.nodes)
+            fringeFace.normal, unmatchedNormals = unmatchedNormals[0], unmatchedNormals[1:]
             i = 0
-            matched = [unmatched.popitem()[1]]  # start anywhere
             while i < len(matched):
                 fringeFace = matched[i]
-                fringeNodes = set(fringeFace.nodes)
-                touching = [face for face in unmatched.values() if not fringeNodes.isdisjoint(face.nodes)]
-                if touching:
-                    normals = np.array([face.normal for face in touching])
-                    tangent = normals.dot(fringeFace.normal) >= maxDot
-                    newlyAdded = [face for face, t in zip(touching, tangent) if t]
-                    for face in newlyAdded:
-                        del unmatched[face.nodes]
-                    matched.extend(newlyAdded)
                 i += 1
+                touching = np.zeros(len(unmatched), dtype=bool)
+                for nid in fringeFace.nodes:
+                    np.logical_or(touching, np.any(nid == unmatchedNodes, axis=1), out=touching)
+                if not np.any(touching):
+                    continue
+                tangent = np.zeros_like(touching, dtype=bool)
+                tangent[touching] = unmatchedNormals[touching].dot(fringeFace.normal) >= dotCriteria  # true if normals are close
+                np.logical_and(touching, tangent, out=tangent)  # true if touching and normals are close
+                indices = np.flatnonzero(tangent).tolist()
+                if not indices:
+                    continue
+                newlyAdded = [unmatched.pop(i) for i in reversed(indices)]
+                newlyAdded.reverse()  # un-reverse the sequence
+                for face, normal in zip(newlyAdded, unmatchedNormals[tangent]):
+                    face.normal = normal
+                matched.extend(newlyAdded)
+                uniqueNodes.update(unmatchedNodes[tangent].flat)
+                unmatchedNodes = unmatchedNodes[~tangent]
+                unmatchedNormals = unmatchedNormals[~tangent]
             newMesh = PolyfaceMesh(doc)
             features.append(newMesh)
-            for face in matched:
-                for nid in face.nodes:
-                    if not nid in newMesh.nodemap:
-                        node = self[self.nodemap[nid] - 1]  # dxf node indices start from 1
-                        newMesh.appendNode(node, label=nid)  # uses the same PolymeshNode
+            uniqueNodes.discard(-1)
+            for nid in sorted(uniqueNodes):
+                node = self[self.nodemap[nid] - 1]  # dxf node indices start from 1
+                newMesh.appendNode(node, label=nid)  # uses the same PolymeshNode
             newMesh.extend(matched)  # uses the same PolymeshElements
-        p.append(perf_counter())
-        print(p[-1] - p[-2], 'c')
-        print('len(features)', len(features))
         return features
 
     def export(self, owner, file):

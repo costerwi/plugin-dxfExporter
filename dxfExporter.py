@@ -124,7 +124,6 @@ def fromOdbResult(viewport):
                 continue  # not currently displayed
             N = len(element.connectivity)
             if N >= 3:  # assumed to have faces
-                # TODO exclude repeated (interior) faces of 3D mesh
                 mesh.extend(faces(element))
             elif N == 2:  # beam or truss
                 try:
